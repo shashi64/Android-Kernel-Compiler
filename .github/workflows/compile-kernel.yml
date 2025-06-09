@@ -1,0 +1,91 @@
+name: Compile Kernel
+
+on:
+  workflow_dispatch:
+    inputs:
+      kernel_clone_cmd:
+        description: 'Kernel repository to clone'
+        required: true
+        default: 'https://github.com/xiaomi-msm8953-devs/android_kernel_xiaomi_msm8953.git'
+
+      kernel_branch:
+        description: 'Kernel branch to build'
+        required: true
+        default: 'lineage-22.2'
+
+      kernel_config:
+        description: 'Kernel defconfig'
+        required: true
+        default: 'msm8953-perf_defconfig xiaomi/vince.config'
+
+      arch:
+        description: 'Target architecture'
+        required: true
+        default: 'arm64'
+        type: choice
+        options:
+          - arm64
+          - arm
+
+      enable_ccache:
+        description: 'Use ccache to speed up builds'
+        required: false
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+      build_env:
+       description: 'Environment variables for kernel build'
+       required: false
+       default: 'O=out PATH=$HOME/clang/bin:$PATH CC="ccache clang" CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-'
+
+      clang_clone_cmd:
+        description: 'Link of compiler to clone and use'
+        required: false
+        default: 'https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/android12-release/clang-r416183b1.tar.gz'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: setup build environment
+      shell: bash
+      run: |
+        sudo apt-get update
+        set +e
+        sudo apt-get install -y build-essential bc bison flex libssl-dev ccache binutils git make openssl curl zip kmod cpio libelf-dev libssl-dev libtfm-dev libc6-dev device-tree-compiler ca-cer
+        set -e
+
+    - name: Setup ccache
+      if: inputs.enable_ccache == 'true'
+      uses: hendrikmuhs/ccache-action@v1.2
+        
+    - name: Setup clang and ccache
+      shell: bash
+      run: |
+          mkdir -p $HOME/clang && wget ${{ inputs.clang_clone_cmd }} -O clang.tar.gz && tar xf clang.tar.gz -C $HOME/clang && sudo apt install gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi
+          if [ ${{ inputs.enable_ccache }} = true ]; then
+            export USE_CCACHE=1
+            export PATH="/usr/lib/ccache:$PATH"
+          fi
+
+    - name: Clone kernel source
+      shell: bash
+      run: |
+        git clone --depth=1 -b ${{ inputs.kernel_branch }} ${{ inputs.kernel_clone_cmd }} kernel-source   
+
+    - name: Build kernel
+      shell: bash
+      run: |
+        cd kernel-source
+        make ${{ inputs.kernel_config }} ARCH=${{ inputs.arch }} ${{ inputs.build_env }}
+        make -j$(nproc) ARCH=${{ inputs.arch }} ${{ inputs.build_env }}
+    
+    - name: Upload kernel artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: kernel-output
+        path: kernel-source/out/arch/${{ inputs.arch }}/boot/
