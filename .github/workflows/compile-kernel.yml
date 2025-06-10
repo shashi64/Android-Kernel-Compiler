@@ -39,7 +39,7 @@ on:
       build_env:
        description: 'Environment variables for kernel build'
        required: false
-       default: 'O=out PATH=$HOME/clang/bin:$PATH CC="ccache clang" CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-'
+       default: 'O=out PATH=$HOME/clang/bin:$PATH CC="clang" CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-'
 
       clang_clone_cmd:
         description: 'Link of compiler to clone and use'
@@ -49,8 +49,10 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
     - name: setup build environment
       shell: bash
       run: |
@@ -58,19 +60,24 @@ jobs:
         set +e
         sudo apt-get install -y build-essential bc bison flex libssl-dev ccache binutils git make openssl curl zip kmod cpio libelf-dev libssl-dev libtfm-dev libc6-dev device-tree-compiler ca-cer
         set -e
-
-    - name: Setup ccache
-      if: inputs.enable_ccache == 'true'
-      uses: hendrikmuhs/ccache-action@v1.2
         
-    - name: Setup clang and ccache
+    - name: Setup Clang and dependencies
       shell: bash
       run: |
-          mkdir -p $HOME/clang && wget ${{ inputs.clang_clone_cmd }} -O clang.tar.gz && tar xf clang.tar.gz -C $HOME/clang && sudo apt install gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi
-          if [ ${{ inputs.enable_ccache }} = true ]; then
-            export USE_CCACHE=1
-            export PATH="/usr/lib/ccache:$PATH"
-          fi
+        mkdir -p $HOME/clang
+        wget "${{ inputs.clang_clone_cmd }}" -O clang.tar.gz
+        tar -xf clang.tar.gz -C $HOME/clang
+        sudo apt-get update
+        sudo apt-get install -y gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi
+    
+    - name: Setup and export ccache
+      if: ${{ inputs.enable_ccache == 'true' }}
+      shell: bash
+      run: |
+        sudo apt-get install -y ccache
+        export USE_CCACHE=1
+        export CCACHE_DIR="$HOME/.ccache"
+        export PATH="/usr/lib/ccache:$PATH"
 
     - name: Clone kernel source
       shell: bash
@@ -84,7 +91,7 @@ jobs:
         make ${{ inputs.kernel_config }} ARCH=${{ inputs.arch }} ${{ inputs.build_env }}
         make -j$(nproc) ARCH=${{ inputs.arch }} ${{ inputs.build_env }}
     
-    - name: Upload kernel artifact
+    - name: Upload kernel artifacts
       uses: actions/upload-artifact@v4
       with:
         name: kernel-output
